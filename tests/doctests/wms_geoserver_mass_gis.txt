@@ -1,6 +1,7 @@
 
 Imports
 
+    >>> from __future__ import (absolute_import, division, print_function)
     >>> from owslib.wms import WebMapService
     >>> from tests.utils import cast_tuple_int_list, cast_tuple_int_list_srs, resource_file, scratch_file
     >>> import os
@@ -8,12 +9,15 @@ Imports
 Fake a request to a GeoServer WMS Server using saved doc from 
 http://giswebservices.massgis.state.ma.us/geoserver/wms
 
-    >>> xml = open(resource_file('wms_mass_gis-caps.xml'), 'r').read()
+    >>> xml = open(resource_file('wms_mass_gis-caps.xml'), 'rb').read()
     >>> wms = WebMapService('url', version='1.1.1', xml=xml)
     
 Test capabilities
 -----------------
 
+
+    >>> wms.updateSequence is not None
+    True
     >>> wms.identification.type
     'OGC:WMS'
     >>> wms.identification.version
@@ -53,10 +57,10 @@ Check contact info (some of it is missing)
     'GIS Programmer'
 
 Test available content layers
-    >>> type(wms.items())
-    <type 'list'>
+    >>> isinstance(wms.items(), list)
+    True
     >>> type(wms.contents)
-    <type 'dict'>
+    <class '...OrderedDict'>
 
  
 Test single item accessor
@@ -73,8 +77,9 @@ Test single item accessor
     >>> cast_tuple_int_list(wms['massgis:GISDATA.SHORELINES_ARC'].boundingBoxWGS84)
     [-71, 41, -69, 42]
     
-    >>> wms['massgis:GISDATA.SHORELINES_ARC'].styles
-    {'GISDATA.SHORELINES_ARC::Default': {'legend': 'http://giswebservices.massgis.state.ma.us/geoserver/wms?request=GetLegendGraphic&format=image%2Fpng&width=20&height=20&layer=GISDATA.SHORELINES_ARC', 'title': None}}
+    >>> x = wms['massgis:GISDATA.SHORELINES_ARC'].styles
+    >>> x == {'GISDATA.SHORELINES_ARC::Default': {'legend': 'http://giswebservices.massgis.state.ma.us/geoserver/wms?request=GetLegendGraphic&format=image%2Fpng&width=20&height=20&layer=GISDATA.SHORELINES_ARC', 'title': None}}
+    True
     
 Expect a KeyError for invalid names
 
@@ -88,8 +93,9 @@ Test operations
     >>> [op.name for op in wms.operations]
     ['GetCapabilities', 'GetMap', 'GetFeatureInfo', 'DescribeLayer', 'GetLegendGraphic']
     
-    >>> wms.getOperationByName('GetMap').methods
-    {'Get': {'url': 'http://giswebservices.massgis.state.ma.us/geoserver/wms?SERVICE=WMS&'}}
+    >>> x = wms.getOperationByName('GetMap').methods
+    >>> x == [{'type' : 'Get', 'url': 'http://giswebservices.massgis.state.ma.us/geoserver/wms?SERVICE=WMS&'}]
+    True
     
     >>> len(wms.getOperationByName('GetMap').formatOptions)
     29
@@ -102,8 +108,8 @@ Test exceptions
 
 Lastly, test the getcapabilities and getmap methods
 
-    >>> wms = WebMapService('http://giswebservices.massgis.state.ma.us/geoserver/wms', version='1.1.1')
+    >>> wms = WebMapService('http://giswebservices.massgis.state.ma.us/geoserver/wms', version='1.1.1', timeout=120)
     >>> img = wms.getmap(layers=['massgis:GISDATA.SHORELINES_ARC'], styles=[''], srs='EPSG:4326', bbox=(-70.8, 42, -70, 42.8), size=(300, 300), format='image/jpeg', transparent=True)
     >>> out = open(scratch_file('massgis_shoreline.jpg'), 'wb')
-    >>> out.write(img.read())
+    >>> bytes_written = out.write(img.read())
     >>> out.close()

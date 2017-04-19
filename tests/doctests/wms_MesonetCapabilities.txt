@@ -1,14 +1,18 @@
 
 Imports
 
+    >>> from __future__ import (absolute_import, division, print_function)
     >>> from owslib.wms import WebMapService
     >>> from tests.utils import resource_file
+    >>> from operator import itemgetter
 
 Fake a request to a WMS Server using saved doc from 
 http://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0r-t.cgi?
 
-    >>> xml = open(resource_file('wms_mesonet-caps.xml'), 'r').read()
+    >>> xml = open(resource_file('wms_mesonet-caps.xml'), 'rb').read()
     >>> wms = WebMapService('url', version='1.1.1', xml=xml)
+    >>> wms.request is None
+    True
     
 Test capabilities
 -----------------
@@ -49,8 +53,8 @@ Test single item accessor
     >>> wms['time_idx'].boundingBoxWGS84
     (-126.0, 24.0, -66.0, 50.0)
     
-    >>> wms['time_idx'].crsOptions
-    ['EPSG:900913', 'EPSG:4326', 'EPSG:3857', 'EPSG:102100']
+    >>> sorted(wms['time_idx'].crsOptions)
+    ['EPSG:102100', 'EPSG:3857', 'EPSG:4326', 'EPSG:900913']
 
     >>> wms['time_idx'].styles
     {}
@@ -77,8 +81,9 @@ Test operations
     >>> [op.name for op in wms.operations]
     ['GetCapabilities', 'GetMap', 'GetFeatureInfo', 'DescribeLayer', 'GetLegendGraphic', 'GetStyles']
 
-    >>> wms.getOperationByName('GetMap').methods
-    {'Post': {'url': 'http://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0r-t.cgi?'}, 'Get': {'url': 'http://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0r-t.cgi?'}}
+    >>> x = sorted(wms.getOperationByName('GetMap').methods, key=itemgetter('type'))
+    >>> x == [{'type': 'Get', 'url': 'http://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0r-t.cgi?'}, {'type': 'Post', 'url': 'http://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0r-t.cgi?'}]
+    True
 
     >>> wms.getOperationByName('GetMap').formatOptions
     ['image/png', 'image/jpeg', 'image/gif', 'image/png; mode=8bit', 'application/x-pdf', 'image/svg+xml', 'image/tiff']

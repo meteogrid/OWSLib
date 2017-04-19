@@ -5,25 +5,19 @@
 #
 # =============================================================================
 
+from __future__ import (absolute_import, division, print_function)
+
 from owslib.crs import Crs
 
-from urllib import urlencode
-import logging
-
 try:
-    hdlr = logging.FileHandler('/tmp/owslibwfs.log')
-except:
-    import tempfile
-    f=tempfile.NamedTemporaryFile(prefix='owslib.wfs-', delete=False)
-    hdlr = logging.FileHandler(f.name)
+    from urllib import urlencode
+except ImportError:
+    from urllib.parse import urlencode
+import logging
+from owslib.util import log
+from owslib.feature.schema import get_schema
 
-log = logging.getLogger(__name__)
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-hdlr.setFormatter(formatter)
-log.addHandler(hdlr)
-log.setLevel(logging.DEBUG)
-
-class WebFeatureService_:
+class WebFeatureService_(object):
     """Base class for WebFeatureService implementations"""
 
     def getBBOXKVP (self,bbox,typename):
@@ -64,36 +58,31 @@ class WebFeatureService_:
             return "%s,%s,%s,%s,%s" % \
                     (bbox[0],bbox[1],bbox[2],bbox[3],srs.getcode())
 
-    def getSRS(self,srsname,typename):
+    def getSRS(self, srsname, typename):
         """Returns None or Crs object for given name
 
         @param typename:  feature name 
         @type typename: String
         """
-        if type(srsname) == type(""):
+        if not isinstance(srsname, Crs):
             srs = Crs(srsname)
         else:
             srs = srsname
 
-        srss = map(lambda crs: crs.getcodeurn(),
-                self.contents[typename].crsOptions)
-
-        for s in srss:
-            s = Crs(s)
-            if srs.authority == s.authority and\
-                    srs.code == s.code:
-                if s.version and srs.version:
-                    if s.version  == srs.version:
-                        idx = srss.index(s.getcodeurn())
-                        return self.contents[typename].crsOptions[idx]
-                else:
-                    idx = srss.index(s.getcodeurn())
-                    return self.contents[typename].crsOptions[idx]
-        return None
+        try:
+            index = self.contents[typename].crsOptions.index(srs)
+            # Return the Crs string that was pulled directly from the
+            # GetCaps document (the 'id' attribute in the Crs object).
+            return self.contents[typename].crsOptions[index]
+        except ValueError:
+            options = ", ".join(map(lambda x: x.id, self.contents[typename].crsOptions))
+            log.warning("Requested srsName '%s' not available for requested typename '%s'. \
+                         Options are: %s. " % (srs.getcode(), typename, options))
+            return None
 
     def getGETGetFeatureRequest(self, typename=None, filter=None, bbox=None, featureid=None,
-                   featureversion=None, propertyname=None, maxfeatures=None,storedQueryID=None, storedQueryParams={},
-                   method='Get'):
+                   featureversion=None, propertyname=None, maxfeatures=None,storedQueryID=None, storedQueryParams=None,
+                   outputFormat=None, method='Get', startindex=None):
         """Formulate proper GetFeature request using KVP encoding
         ----------
         typename : list
@@ -112,6 +101,10 @@ class WebFeatureService_:
             Maximum number of features to be returned.
         method : string
             Qualified name of the HTTP DCP method to use.
+        outputFormat: string (optional)
+            Requested response format of the request.
+        startindex: int (optional)
+            Start position to return feature set (paging in combination with maxfeatures)
 
         There are 3 different modes of use
 
@@ -119,8 +112,9 @@ class WebFeatureService_:
         2) typename and filter (==query) (more expressive)
         3) featureid (direct access to known features)
         """
+        storedQueryParams = storedQueryParams or {}
 
-        base_url = self.getOperationByName('GetFeature').methods[method]['url']
+        base_url = next((m.get('url') for m in self.getOperationByName('GetFeature').methods if m.get('type').lower() == method.lower()))
         base_url = base_url if base_url.endswith("?") else base_url+"?"
             
         request = {'service': 'WFS', 'version': self.version, 'request': 'GetFeature'}
@@ -134,18 +128,38 @@ class WebFeatureService_:
             request['query'] = str(filter)
         if typename:
             typename = [typename] if type(typename) == type("") else typename
-            request['typename'] = ','.join(typename)
+            if int(self.version.split('.')[0]) >= 2:
+                request['typenames'] = ','.join(typename)
+            else:
+                request['typename'] = ','.join(typename)
         if propertyname: 
             request['propertyname'] = ','.join(propertyname)
         if featureversion: 
             request['featureversion'] = str(featureversion)
         if maxfeatures: 
-            request['maxfeatures'] = str(maxfeatures)
+            if int(self.version.split('.')[0]) >= 2:
+                request['count'] = str(maxfeatures)
+            else:
+                request['maxfeatures'] = str(maxfeatures)
+        if startindex:
+            request['startindex'] = str(startindex)
         if storedQueryID: 
             request['storedQuery_id']=str(storedQueryID)
             for param in storedQueryParams:
                 request[param]=storedQueryParams[param]
-                
-        data = urlencode(request)
+        if outputFormat is not None:
+            request["outputFormat"] = outputFormat
+
+        data = urlencode(request, doseq=True)
 
         return base_url+data
+
+
+    def get_schema(self, typename):
+        """
+        Get layer schema compatible with :class:`fiona` schema object
+        """
+
+        return get_schema(self.url, typename, self.version)
+    
+

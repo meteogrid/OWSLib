@@ -1,5 +1,7 @@
 # encoding: utf-8
 
+from __future__ import (absolute_import, division, print_function)
+
 from owslib.etree import etree
 from owslib import crs, util
 from owslib.util import testXMLValue, testXMLAttribute, nspath_eval, xmltag_split, dict_union, extract_xml_list
@@ -17,7 +19,7 @@ def nsp(path):
 
 class SensorML(object):
     def __init__(self, element):
-        if isinstance(element, str):
+        if isinstance(element, str) or isinstance(element, bytes):
             self._root = etree.fromstring(element)
         else:
             self._root = element
@@ -45,12 +47,14 @@ class PropertyGroup(object):
         self.capabilities = {}
         for cap in element.findall(nsp('sml:capabilities')):
             name = testXMLAttribute(cap, "name")
-            self.capabilities[name] = cap[0]
+            if name is not None:
+                self.capabilities[name] = cap[0]
 
         self.characteristics = {}
         for cha in element.findall(nsp('sml:characteristics')):
             name = testXMLAttribute(cha, "name")
-            self.characteristics[name] = cha[0]
+            if name is not None:
+                self.characteristics[name] = cha[0]
 
     def get_capabilities_by_name(self, name):
         """

@@ -15,9 +15,16 @@ OWS Common: http://www.opengeospatial.org/standards/common
 Currently supports version 1.1.0 (06-121r3).
 """
 
+from __future__ import (absolute_import, division, print_function)
+
+import logging
+
 from owslib.etree import etree
 from owslib import crs, util
 from owslib.namespaces import Namespaces
+
+LOGGER = logging.getLogger(__name__)
+
 n = Namespaces()
 
 OWS_NAMESPACE_1_0_0 = n.get_namespace("ows")
@@ -67,9 +74,13 @@ class ServiceIdentification(object):
         val = self._root.find(util.nspath('ServiceTypeVersion', namespace))
         self.version = util.testXMLValue(val)
 
+        self.versions = []
+        for v in self._root.findall(util.nspath('ServiceTypeVersion', namespace)):
+            self.versions.append(util.testXMLValue(v))
+        
         self.profiles = []
         for p in self._root.findall(util.nspath('Profile', namespace)):
-            self.profiles.append(util.testXMLValue(val))
+            self.profiles.append(util.testXMLValue(p))
 
 class ServiceProvider(object):
     """Initialize an OWS Common ServiceProvider construct"""
@@ -145,18 +156,49 @@ class ServiceContact(object):
         val = self._root.find(util.nspath('ServiceContact/ContactInfo/ContactInstructions', namespace))
         self.instructions = util.testXMLValue(val)
    
+
+class Constraint(object):
+    def __init__(self, elem, namespace=DEFAULT_OWS_NAMESPACE):
+        self.name    = elem.attrib.get('name')
+        self.values  = [i.text for i in elem.findall(util.nspath('Value', namespace))]
+        self.values += [i.text for i in elem.findall(util.nspath('AllowedValues/Value', namespace))]
+
+    def __repr__(self):
+        if self.values:
+            return "Constraint: %s - %s" % (self.name, self.values)
+        else:
+            return "Constraint: %s" % self.name
+
+
+class Parameter(object):
+    def __init__(self, elem, namespace=DEFAULT_OWS_NAMESPACE):
+        self.name    = elem.attrib.get('name')
+        self.values  = [i.text for i in elem.findall(util.nspath('Value', namespace))]
+        self.values += [i.text for i in elem.findall(util.nspath('AllowedValues/Value', namespace))]
+
+    def __repr__(self):
+        if self.values:
+            return "Parameter: %s - %s" % (self.name, self.values)
+        else:
+            return "Parameter: %s" % self.name
+
+
 class OperationsMetadata(object):
     """Initialize an OWS OperationMetadata construct"""
-    def __init__(self,elem,namespace=DEFAULT_OWS_NAMESPACE):
+    def __init__(self, elem, namespace=DEFAULT_OWS_NAMESPACE):
+        if 'name' not in elem.attrib: # This is not a valid element
+            return
         self.name = elem.attrib['name']
         self.formatOptions = ['text/xml']
-        methods = []
         parameters = []
-        constraints = []
+        self.methods = []
+        self.constraints = []
 
         for verb in elem.findall(util.nspath('DCP/HTTP/*', namespace)):
-            methods.append((util.xmltag_split(verb.tag), {'url': verb.attrib[util.nspath('href', XLINK_NAMESPACE)]}))
-        self.methods = dict(methods)
+            url = util.testXMLAttribute(verb, util.nspath('href', XLINK_NAMESPACE))
+            if url is not None:
+                verb_constraints = [Constraint(conts, namespace) for conts in verb.findall(util.nspath('Constraint', namespace))]
+                self.methods.append({'constraints' : verb_constraints, 'type' : util.xmltag_split(verb.tag), 'url': url})
 
         for parameter in elem.findall(util.nspath('Parameter', namespace)):
             if namespace == OWS_NAMESPACE_1_1_0:
@@ -166,8 +208,8 @@ class OperationsMetadata(object):
         self.parameters = dict(parameters)
 
         for constraint in elem.findall(util.nspath('Constraint', namespace)):
-            constraints.append((constraint.attrib['name'], {'values': [i.text for i in constraint.findall(util.nspath('Value', namespace))]}))
-        self.constraints = dict(constraints)
+            self.constraints.append(Constraint(constraint, namespace))
+
 
 class BoundingBox(object):
     """Initialize an OWS BoundingBox construct"""
@@ -178,9 +220,10 @@ class BoundingBox(object):
         self.maxy = None
 
         val = elem.attrib.get('crs')
-        if val is not None:
+        try:
             self.crs = crs.Crs(val)
-        else:
+        except (AttributeError, ValueError):
+            LOGGER.warning('Invalid CRS %r. Expected integer')
             self.crs = None
 
         val = elem.attrib.get('dimensions')

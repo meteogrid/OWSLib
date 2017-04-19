@@ -1,13 +1,18 @@
 Instantiate WPS
 
-    >>> from tests.utils import resource_file, compare_xml
+    >>> from __future__ import (absolute_import, division, print_function)
+    >>> from tests.utils import resource_file, compare_xml, setup_logging
     >>> from owslib.wps import WebProcessingService
-    >>> wps = WebProcessingService('http://rsg.pml.ac.uk/wps/vector.cgi')
+    >>> logger = setup_logging('INFO')
+
+Build WPS object; service has been down for some time so skip caps here
+
+    >>> wps = WebProcessingService('http://rsg.pml.ac.uk/wps/vector.cgi', skip_caps=True)
 
 Execute face WPS invocation
 
-    >>> request = open(resource_file('wps_PMLExecuteRequest6.xml'), 'r').read()
-    >>> response = open(resource_file('wps_PMLExecuteResponse6.xml'), 'r').read()
+    >>> request = open(resource_file('wps_PMLExecuteRequest6.xml'), 'rb').read()
+    >>> response = open(resource_file('wps_PMLExecuteResponse6.xml'), 'rb').read()
     >>> 
     >>> execution = wps.execute(None, [], request=request, response=response)
     Executing WPS request...

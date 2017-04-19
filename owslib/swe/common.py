@@ -1,3 +1,5 @@
+from __future__ import (absolute_import, division, print_function)
+
 from owslib.util import nspath_eval
 from owslib.namespaces import Namespaces
 from owslib.util import testXMLAttribute, testXMLValue, InfiniteDateTime, NegativeInfiniteDateTime
@@ -6,6 +8,9 @@ from dateutil import parser
 from datetime import timedelta
 
 from owslib.etree import etree
+
+import inspect
+from sys import modules
 
 def get_namespaces():
     ns = Namespaces()
@@ -22,9 +27,9 @@ def make_pair(string, cast=None):
     string = string.split(" ")
     if cast is not None:
         try:
-            string = map(lambda x: cast(x), string)
+            string = [cast(x) for x in string]
         except:
-            print "Could not cast pair to correct type.  Setting to an empty tuple!"
+            print("Could not cast pair to correct type.  Setting to an empty tuple!")
             string = ""
 
     return tuple(string)
@@ -58,17 +63,24 @@ def get_float(value):
     except:
         return None
 
-AnyScalar    = map(lambda x: nspv(x), ["swe20:Boolean", "swe20:Count", "swe20:Quantity", "swe20:Time", "swe20:Category", "swe20:Text"])
-AnyNumerical = map(lambda x: nspv(x), ["swe20:Count", "swe20:Quantity", "swe20:Time"])
-AnyRange     = map(lambda x: nspv(x), ["swe20:QuantityRange", "swe20:TimeRange", "swe20:CountRange", "swe20:CategoryRange"])
+AnyScalar    = [nspv(x) for x in ["swe20:Boolean", "swe20:Count", "swe20:Quantity", "swe20:Time", "swe20:Category", "swe20:Text"]]
+AnyNumerical = [nspv(x) for x in ["swe20:Count", "swe20:Quantity", "swe20:Time"]]
+AnyRange     = [nspv(x) for x in ["swe20:QuantityRange", "swe20:TimeRange", "swe20:CountRange", "swe20:CategoryRange"]]
 
 class NamedObject(object):
     def __init__(self, element):
         # No call to super(), the type object will process that.
         self.name           = testXMLAttribute(element, "name")
         try:
-            self.content    = eval(element[-1].tag.split("}")[-1])(element[-1])
-        except IndexError:
+            # attempt to find a class with the same name as the XML tag parsed
+            # which is also contained within this module.
+            # Ideally the classes should be explicitly whitelisted, but I
+            # don't know what the set of possible classes to dispatch to should
+            # be
+            self.content = obj_mapping[element[-1].tag.split("}")[-1]](
+                                                                    element[-1])
+
+        except (IndexError, KeyError):
             self.content    = None
         except BaseException:
             raise
@@ -109,7 +121,7 @@ class AbstractSimpleComponent(AbstractDataComponent):
         self.axisID         = testXMLAttribute(element,"axisID")            # string, optional
 
         # Elements
-        self.quality        = filter(None, [Quality(q) for q in [e.find('*') for e in element.findall(nspv("swe20:quality"))] if q is not None])
+        self.quality        = [_f for _f in [Quality(q) for q in [e.find('*') for e in element.findall(nspv("swe20:quality"))] if q is not None] if _f]
         try:
             self.nilValues  = NilValues(element.find(nspv("swe20:nilValues")))
         except:
@@ -132,7 +144,7 @@ class Quality(object):
 class NilValues(AbstractSWE):
     def __init__(self, element):
         super(NilValues, self).__init__(element)
-        self.nilValue           = filter(None, [nilValue(x) for x in element.findall(nspv("swe20:nilValue"))]) # string, min=0, max=X
+        self.nilValue           = [_f for _f in [nilValue(x) for x in element.findall(nspv("swe20:nilValue"))] if _f] # string, min=0, max=X
 
 class nilValue(object):
     def __init__(self, element):
@@ -142,21 +154,21 @@ class nilValue(object):
 class AllowedTokens(AbstractSWE):
     def __init__(self, element):
         super(AllowedTokens, self).__init__(element)
-        self.value              = filter(None, [testXMLValue(x) for x in element.findall(nspv("swe20:value"))]) # string, min=0, max=X
+        self.value              = [_f for _f in [testXMLValue(x) for x in element.findall(nspv("swe20:value"))] if _f] # string, min=0, max=X
         self.pattern            = testXMLValue(element.find(nspv("swe20:pattern")))                             # string (Unicode Technical Standard #18, Version 13), min=0
 
 class AllowedValues(AbstractSWE):
     def __init__(self, element):
         super(AllowedValues, self).__init__(element)
-        self.value              = filter(None, map(lambda x: get_float(x), [testXMLValue(x) for x in element.findall(nspv("swe20:value"))]))
-        self.interval           = filter(None, [make_pair(testXMLValue(x)) for x in element.findall(nspv("swe20:interval"))])
+        self.value              = [_f for _f in [get_float(x) for x in [testXMLValue(x) for x in element.findall(nspv("swe20:value"))]] if _f]
+        self.interval           = [_f for _f in [make_pair(testXMLValue(x)) for x in element.findall(nspv("swe20:interval"))] if _f]
         self.significantFigures = get_int(testXMLValue(element.find(nspv("swe20:significantFigures"))))                                         # integer, min=0
 
 class AllowedTimes(AbstractSWE):
     def __init__(self, element):
         super(AllowedTimes, self).__init__(element)
-        self.value              = filter(None, [testXMLValue(x) for x in element.findall(nspv("swe20:value"))])
-        self.interval           = filter(None, [make_pair(testXMLValue(x)) for x in element.findall(nspv("swe20:interval"))])
+        self.value              = [_f for _f in [testXMLValue(x) for x in element.findall(nspv("swe20:value"))] if _f]
+        self.interval           = [_f for _f in [make_pair(testXMLValue(x)) for x in element.findall(nspv("swe20:interval"))] if _f]
         self.significantFigures = get_int(testXMLValue(element.find(nspv("swe20:significantFigures"))))                         # integer, min=0
 
 class Boolean(AbstractSimpleComponent):
@@ -266,6 +278,10 @@ def get_time(value, referenceTime, uom):
         elif value.lower() == "-inf":
             value  = NegativeInfiniteDateTime()
 
+    # Usually due to not finding the element
+    except TypeError:
+        value = None
+
     return value
 
 class Time(AbstractSimpleComponent):
@@ -282,8 +298,10 @@ class Time(AbstractSimpleComponent):
         # Attributes
         self.localFrame         = testXMLAttribute(element,"localFrame")                                    # anyURI, optional
         try:
-            self.referenceTime  = parser.parse(testXMLAttribute(element,"referenceTime"))                   # dateTime, optional
-        except (AttributeError, ValueError):
+            self.referenceTime  = parser.parse(testXMLAttribute(element,
+                                                                "referenceTime")
+                                               ) # dateTime, optional
+        except (AttributeError, ValueError, TypeError):
             self.referenceTime  = None
 
         value                   = testXMLValue(element.find(nspv("swe20:value")))                           # TimePosition, min=0, max=1
@@ -304,7 +322,7 @@ class TimeRange(AbstractSimpleComponent):
         self.localFrame         = testXMLAttribute(element,"localFrame")                                # anyURI, optional
         try:
             self.referenceTime  = parser.parse(testXMLAttribute(element,"referenceTime"))               # dateTime, optional
-        except (AttributeError, ValueError):
+        except (AttributeError, ValueError, TypeError):
             self.referenceTime  = None
 
         values                  = make_pair(testXMLValue(element.find(nspv("swe20:value"))))            # TimePosition, min=0, max=1
@@ -388,11 +406,11 @@ class AbstractEncoding(object):
     def __new__(cls, element):
         t = element[-1].tag.split("}")[-1]
         if t == "TextEncoding":
-            return super(AbstractEncoding, cls).__new__(TextEncoding, element)
+            return super(AbstractEncoding, cls).__new__(TextEncoding)
         elif t == "XMLEncoding":
-            return super(AbstractEncoding, cls).__new__(XMLEncoding, element)
+            return super(AbstractEncoding, cls).__new__(XMLEncoding)
         elif t == "BinaryEncoding":
-            return super(AbstractEncoding, cls).__new__(BinaryEncoding, element)
+            return super(AbstractEncoding, cls).__new__(BinaryEncoding)
 
 class TextEncoding(AbstractEncoding):
     def __init__(self, element):
@@ -408,3 +426,7 @@ class XMLEncoding(AbstractEncoding):
 class BinaryEncoding(AbstractEncoding):
     def __init__(self, element):
         raise NotImplementedError
+
+# TODO: Individually whitelist valid classes which correspond to XML tags
+obj_mapping = {name: obj for name, obj in inspect.getmembers(modules[__name__],
+                                                             inspect.isclass)}

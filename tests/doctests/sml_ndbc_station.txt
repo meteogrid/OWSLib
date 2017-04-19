@@ -1,5 +1,6 @@
 Imports
 
+    >>> from __future__ import (absolute_import, division, print_function)
     >>> from tests.utils import resource_file
     >>> from owslib.swe.sensor.sml import SensorML
     >>> from dateutil import parser
@@ -7,7 +8,7 @@ Imports
 
 Initialize
 
-    >>> xml = open(resource_file('sml_ndbc_station.xml'), 'r').read()
+    >>> xml = open(resource_file('sml_ndbc_station.xml'), 'rb').read()
     >>> root = SensorML(xml)
     >>> system = root.members[0]
 
@@ -16,7 +17,7 @@ Initialize
 
 Contacts
 
-    >>> system.contacts.keys()
+    >>> sorted(system.contacts.keys())
     ['urn:ogc:def:classifiers:OGC:contactType:operator', 'urn:ogc:def:classifiers:OGC:contactType:publisher']
 
     >>> operators = system.get_contacts_by_role('urn:ogc:def:classifiers:OGC:contactType:operator')
@@ -49,8 +50,8 @@ Contacts
 
 Identification
 
-    >>> system.identifiers.keys()
-    ['StationId', 'Long Name', 'Short Name']
+    >>> sorted(system.identifiers.keys())
+    ['Long Name', 'Short Name', 'StationId']
 
     >>> sid = system.get_identifiers_by_name('StationId')
     >>> sid[0].name
@@ -65,7 +66,7 @@ Identification
 
 Classifiers
 
-    >>> system.classifiers.keys()
+    >>> sorted(system.classifiers.keys())
     ['Platform Type']
     >>> classi = system.get_classifiers_by_name('Platform type')
     >>> classi[0].name
@@ -94,7 +95,7 @@ Documents
 
 History
 
-    >>> system.history.keys()
+    >>> sorted(system.history.keys())
     ['deployment_start', 'deployment_stop']
 
     >>> his = system.get_history_by_name('deployment_start')

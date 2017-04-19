@@ -9,12 +9,20 @@
 # Contact email: d.lowe@rl.ac.uk
 # =============================================================================
 
+from __future__ import (absolute_import, division, print_function)
+
 from owslib.coverage.wcsBase import WCSBase, WCSCapabilitiesReader, ServiceException
-from urllib import urlencode
+try:
+    from urllib import urlencode
+except ImportError:
+    from urllib.parse import urlencode
 from owslib.util import openURL, testXMLValue
 from owslib.etree import etree
 from owslib.crs import Crs
 import os, errno
+
+import logging
+from owslib.util import log
 
 #  function to save writing out WCS namespace in full each time
 def ns(tag):
@@ -29,7 +37,7 @@ class WebCoverageService_1_0_0(WCSBase):
         if name in self.__getattribute__('contents').keys():
             return self.__getattribute__('contents')[name]
         else:
-            raise KeyError, "No content named %s" % name
+            raise KeyError("No content named %s" % name)
     
     def __init__(self,url,xml, cookies):
         self.version='1.0.0'
@@ -48,6 +56,8 @@ class WebCoverageService_1_0_0(WCSBase):
         if se is not None:
             err_message = str(se.text).strip()  
             raise ServiceException(err_message, xml) 
+
+        self.updateSequence = self._capabilities.attrib.get('updateSequence')
 
         #serviceIdentification metadata
         subelem=self._capabilities.find(ns('Service'))
@@ -105,12 +115,16 @@ class WebCoverageService_1_0_0(WCSBase):
         http://myhost/mywcs?SERVICE=WCS&REQUEST=GetCoverage&IDENTIFIER=TuMYrRQ4&VERSION=1.1.0&BOUNDINGBOX=-180,-90,180,90&TIME=2792-06-01T00:00:00.0&FORMAT=cf-netcdf
            
         """
-        
-        self.log.debug('WCS 1.0.0 DEBUG: Parameters passed to GetCoverage: identifier=%s, bbox=%s, time=%s, format=%s, crs=%s, width=%s, height=%s, resx=%s, resy=%s, resz=%s, parameter=%s, method=%s, other_arguments=%s'%(identifier, bbox, time, format, crs, width, height, resx, resy, resz, parameter, method, str(kwargs)))
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug('WCS 1.0.0 DEBUG: Parameters passed to GetCoverage: identifier=%s, bbox=%s, time=%s, format=%s, crs=%s, width=%s, height=%s, resx=%s, resy=%s, resz=%s, parameter=%s, method=%s, other_arguments=%s'%(identifier, bbox, time, format, crs, width, height, resx, resy, resz, parameter, method, str(kwargs)))
                 
-        base_url = self.getOperationByName('GetCoverage').methods[method]['url']
+        try:
+            base_url = next((m.get('url') for m in self.getOperationByName('GetCoverage').methods if m.get('type').lower() == method.lower()))
+        except StopIteration:
+            base_url = self.url
         
-        self.log.debug('WCS 1.0.0 DEBUG: base url of server: %s'%base_url)
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug('WCS 1.0.0 DEBUG: base url of server: %s'%base_url)
         
         #process kwargs
         request = {'version': self.version, 'request': 'GetCoverage', 'service':'WCS'}
@@ -144,7 +158,8 @@ class WebCoverageService_1_0_0(WCSBase):
         
         #encode and request
         data = urlencode(request)
-        self.log.debug('WCS 1.0.0 DEBUG: Second part of URL: %s'%data)
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug('WCS 1.0.0 DEBUG: Second part of URL: %s'%data)
         
         
         u=openURL(base_url, data, method, self.cookies)
@@ -158,8 +173,9 @@ class WebCoverageService_1_0_0(WCSBase):
         for item in self.operations:
             if item.name == name:
                 return item
-        raise KeyError, "No operation named %s" % name
-    
+        raise KeyError("No operation named %s" % name)
+
+
 class OperationMetadata(object):
     """Abstraction for WCS metadata.   
     Implements IMetadata.
@@ -169,15 +185,15 @@ class OperationMetadata(object):
         self.name = elem.tag.split('}')[1]          
         
         #self.formatOptions = [f.text for f in elem.findall('{http://www.opengis.net/wcs/1.1/ows}Parameter/{http://www.opengis.net/wcs/1.1/ows}AllowedValues/{http://www.opengis.net/wcs/1.1/ows}Value')]
-        methods = []
+        self.methods = []
         for resource in elem.findall(ns('DCPType/')+ns('HTTP/')+ns('Get/')+ns('OnlineResource')):
             url = resource.attrib['{http://www.w3.org/1999/xlink}href']
-            methods.append(('Get', {'url': url}))        
+            self.methods.append({'type': 'Get', 'url': url})
         for resource in elem.findall(ns('DCPType/')+ns('HTTP/')+ns('Post/')+ns('OnlineResource')):
             url = resource.attrib['{http://www.w3.org/1999/xlink}href']
-            methods.append(('Post', {'url': url}))        
-        self.methods = dict(methods)
-            
+            self.methods.append({'type': 'Post', 'url': url})
+
+
 class ServiceIdentification(object):
     """ Abstraction for ServiceIdentification metadata """
     def __init__(self,elem):

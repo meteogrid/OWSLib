@@ -1,3 +1,4 @@
+from __future__ import absolute_import
 from setuptools import setup, find_packages
 import owslib
 from setuptools.command.test import test as TestCommand
@@ -29,10 +30,10 @@ setup(name              = 'OWSLib',
       author_email      = 'sean.gillies@gmail.com',
       maintainer        = 'Tom Kralidis',
       maintainer_email  = 'tomkralidis@gmail.com',
-      url               = 'https://geopython.github.io/OWSLib',
+      url               = 'http://geopython.github.io/OWSLib',
       install_requires  = reqs,
       cmdclass          = {'test': PyTest},
-      packages          = find_packages(),
+      packages          = find_packages(exclude=["docs", "etc", "examples", "tests"]),
       classifiers       = [
         'Development Status :: 4 - Beta',
         'Intended Audience :: Developers',

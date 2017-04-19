@@ -7,34 +7,37 @@
 # Contact email: tomkralidis@gmail.com
 # =============================================================================
 
+from __future__ import (absolute_import, division, print_function)
+
 import sys
 from dateutil import parser
 from datetime import datetime
 import pytz
-from owslib.etree import etree
-import urlparse, urllib2
-from urllib2 import urlopen, HTTPError, Request
-from urllib2 import HTTPPasswordMgrWithDefaultRealm
-from urllib2 import HTTPBasicAuthHandler
-from StringIO import StringIO
-import cgi
-from urllib import urlencode
-import re
+from owslib.etree import etree, ParseError
+from owslib.namespaces import Namespaces
+try:                    # Python 3
+    from urllib.parse import urlsplit, urlencode
+except ImportError:     # Python 2
+    from urlparse import urlsplit
+    from urllib import urlencode
 
+try:
+    from StringIO import StringIO  # Python 2
+    BytesIO = StringIO
+except ImportError:
+    from io import StringIO, BytesIO  # Python 3
+
+import cgi
+import re
+from copy import deepcopy
+import warnings
+import six
+import requests
+import codecs
 
 """
 Utility functions and classes
 """
-
-class RereadableURL(StringIO,object):
-    """ Class that acts like a combination of StringIO and url - has seek method and url headers etc """
-    def __init__(self, u):
-        #get url headers etc from url
-        self.headers = u.headers                
-        #get file like seek, read methods from StringIO
-        content=u.read()
-        super(RereadableURL, self).__init__(content)
-
 
 class ServiceException(Exception):
     #TODO: this should go in ows common module when refactored.  
@@ -43,7 +46,7 @@ class ServiceException(Exception):
 # http://stackoverflow.com/questions/6256183/combine-two-dictionaries-of-dictionaries-python
 dict_union = lambda d1,d2: dict((x,(dict_union(d1.get(x,{}),d2[x]) if
   isinstance(d2.get(x),dict) else d2.get(x,d1.get(x)))) for x in
-  set(d1.keys()+d2.keys()))
+  set(list(d1.keys())+list(d2.keys())))
 
 
 # Infinite DateTimes for Python.  Used in SWE 2.0 and other OGC specs as "INF" and "-INF"
@@ -114,65 +117,98 @@ def xml_to_dict(root, prefix=None, depth=1, diction=None):
 
     return ret
 
-def openURL(url_base, data, method='Get', cookies=None, username=None, password=None):
-    ''' function to open urls - wrapper around urllib2.urlopen but with additional checks for OGC service exceptions and url formatting, also handles cookies and simple user password authentication'''
-    url_base.strip() 
-    lastchar = url_base[-1]
-    if lastchar not in ['?', '&']:
-        if url_base.find('?') == -1:
-            url_base = url_base + '?'
-        else:
-            url_base = url_base + '&'
-            
+class ResponseWrapper(object):
+    """
+    Return object type from openURL.
+
+    Provides a thin shim around requests response object to maintain code compatibility.
+    """
+    def __init__(self, response):
+        self._response = response
+
+    def info(self):
+        return self._response.headers
+
+    def read(self):
+        return self._response.content
+
+    def geturl(self):
+        return self._response.url.replace('&&', '&')
+
+    # @TODO: __getattribute__ for poking at response
+
+def openURL(url_base, data=None, method='Get', cookies=None, username=None, password=None, timeout=30, headers=None):
+    """
+    Function to open URLs.
+
+    Uses requests library but with additional checks for OGC service exceptions and url formatting.
+    Also handles cookies and simple user password authentication.
+    """
+    headers = headers if headers is not None else {}
+    rkwargs = {}
+
+    rkwargs['timeout'] = timeout
+
+    auth = None
     if username and password:
-        # Provide login information in order to use the WMS server
-        # Create an OpenerDirector with support for Basic HTTP 
-        # Authentication...
-        passman = HTTPPasswordMgrWithDefaultRealm()
-        passman.add_password(None, url_base, username, password)
-        auth_handler = HTTPBasicAuthHandler(passman)
-        opener = urllib2.build_opener(auth_handler)
-        openit = opener.open
+        auth = (username, password)
+
+    rkwargs['auth'] = auth
+
+    # FIXUP for WFS in particular, remove xml style namespace
+    # @TODO does this belong here?
+    method = method.split("}")[-1]
+
+    if method.lower() == 'post':
+        try:
+            xml = etree.fromstring(data)
+            headers['Content-Type'] = 'text/xml'
+        except (ParseError, UnicodeEncodeError):
+            pass
+
+        rkwargs['data'] = data
+
+    elif method.lower() == 'get':
+        rkwargs['params'] = data
+        
     else:
-        # NOTE: optionally set debuglevel>0 to debug HTTP connection
-        #opener = urllib2.build_opener(urllib2.HTTPHandler(debuglevel=0))
-        #openit = opener.open
-        openit = urlopen
-   
-    try:
-        if method == 'Post':
-            req = Request(url_base, data)
-            # set appropriate header if posting XML
-            try:
-                xml = etree.fromstring(data)
-                req.add_header('Content-Type', "text/xml")
-            except:
-                pass
-        else:
-            req=Request(url_base + data)
-        if cookies is not None:
-            req.add_header('Cookie', cookies)
-        u = openit(req)
-    except HTTPError, e: #Some servers may set the http header to 400 if returning an OGC service exception or 401 if unauthorised.
-        if e.code in [400, 401]:
-            raise ServiceException, e.read()
-        else:
-            raise e
+        raise ValueError("Unknown method ('%s'), expected 'get' or 'post'" % method)
+
+    if cookies is not None:
+        rkwargs['cookies'] = cookies
+
+    req = requests.request(method.upper(),
+                           url_base,
+                           headers=headers,
+                           **rkwargs)
+
+    if req.status_code in [400, 401]:
+        raise ServiceException(req.text)
+
+    if req.status_code in [404, 500, 502, 503, 504]:    # add more if needed
+        req.raise_for_status()
+
     # check for service exceptions without the http header set
-    if ((u.info().has_key('Content-Type')) and (u.info()['Content-Type'] in ['text/xml', 'application/xml'])):          
+    if 'Content-Type' in req.headers and req.headers['Content-Type'] in ['text/xml', 'application/xml', 'application/vnd.ogc.se_xml']:
         #just in case 400 headers were not set, going to have to read the xml to see if it's an exception report.
-        #wrap the url stram in a extended StringIO object so it's re-readable
-        u=RereadableURL(u)      
-        se_xml= u.read()
-        se_tree = etree.fromstring(se_xml)
-        serviceException=se_tree.find('{http://www.opengis.net/ows}Exception')
-        if serviceException is None:
-            serviceException=se_tree.find('ServiceException')
-        if serviceException is not None:
-            raise ServiceException, \
-            str(serviceException.text).strip()
-        u.seek(0) #return cursor to start of u      
-    return u
+        se_tree = etree.fromstring(req.content)
+
+        # to handle the variety of namespaces and terms across services
+        # and versions, especially for "legacy" responses like WMS 1.3.0
+        possible_errors = [
+            '{http://www.opengis.net/ows}Exception',
+            '{http://www.opengis.net/ows/1.1}Exception',
+            '{http://www.opengis.net/ogc}ServiceException',
+            'ServiceException'
+        ]
+
+        for possible_error in possible_errors:
+            serviceException = se_tree.find(possible_error)
+            if serviceException is not None:
+                # and we need to deal with some message nesting
+                raise ServiceException('\n'.join([str(t).strip() for t in serviceException.itertext() if str(t).strip()]))
+
+    return ResponseWrapper(req)
 
 #default namespace for nspath is OWS common
 OWS_NAMESPACE = 'http://www.opengis.net/ows/1.1'
@@ -216,6 +252,66 @@ def cleanup_namespaces(element):
     else:
         return etree.fromstring(etree.tostring(element))
 
+
+def add_namespaces(root, ns_keys):
+    if isinstance(ns_keys, six.string_types):
+        ns_keys = [ns_keys]
+
+    namespaces = Namespaces()
+
+    ns_keys = [(x, namespaces.get_namespace(x)) for x in ns_keys]
+
+    if etree.__name__ != 'lxml.etree':
+        # We can just add more namespaces when not using lxml.
+        # We can't re-add an existing namespaces.  Get a list of current
+        # namespaces in use
+        existing_namespaces = set()
+        for elem in root.getiterator():
+            if elem.tag[0] == "{":
+                uri, tag = elem.tag[1:].split("}")
+                existing_namespaces.add(namespaces.get_namespace_from_url(uri))
+        for key, link in ns_keys:
+            if link is not None and key not in existing_namespaces:
+                root.set("xmlns:%s" % key, link)
+        return root
+    else:
+        # lxml does not support setting xmlns attributes
+        # Update the elements nsmap with new namespaces
+        new_map = root.nsmap
+        for key, link in ns_keys:
+            if link is not None:
+                new_map[key] = link
+        # Recreate the root element with updated nsmap
+        new_root = etree.Element(root.tag, nsmap=new_map)
+        # Carry over attributes
+        for a, v in list(root.items()):
+            new_root.set(a, v)
+        # Carry over children
+        for child in root:
+            new_root.append(deepcopy(child))
+        return new_root
+
+
+def getXMLInteger(elem, tag):
+    """
+    Return the text within the named tag as an integer.
+
+    Raises an exception if the tag cannot be found or if its textual
+    value cannot be converted to an integer.
+
+    Parameters
+    ----------
+
+    - elem: the element to search within
+    - tag: the name of the tag to look for
+
+    """
+    e = elem.find(tag)
+    if e is None:
+        raise ValueError('Missing %s in %s' % (tag, elem))
+    return int(e.text.strip())
+
+
 def testXMLValue(val, attrib=False):
     """
 
@@ -255,7 +351,7 @@ def testXMLAttribute(element, attribute):
 
     return None
 
-def http_post(url=None, request=None, lang='en-US', timeout=10):
+def http_post(url=None, request=None, lang='en-US', timeout=10, username=None, password=None):
     """
 
     Invoke an HTTP POST request 
@@ -270,37 +366,63 @@ def http_post(url=None, request=None, lang='en-US', timeout=10):
 
     """
 
-    if url is not None:
-        u = urlparse.urlsplit(url)
-        r = urllib2.Request(url, request)
-        r.add_header('User-Agent', 'OWSLib (https://geopython.github.io/OWSLib)')
-        r.add_header('Content-type', 'text/xml')
-        r.add_header('Content-length', '%d' % len(request))
-        r.add_header('Accept', 'text/xml')
-        r.add_header('Accept-Language', lang)
-        r.add_header('Accept-Encoding', 'gzip,deflate')
-        r.add_header('Host', u.netloc)
+    if url is None:
+        raise ValueError("URL required")
 
-        try:
-            up = urllib2.urlopen(r,timeout=timeout);
-        except TypeError:
-            import socket
-            socket.setdefaulttimeout(timeout)
-            up = urllib2.urlopen(r)
+    u = urlsplit(url)
 
-        ui = up.info()  # headers
-        response = up.read()
-        up.close()
+    headers = {
+        'User-Agent'      : 'OWSLib (https://geopython.github.io/OWSLib)',
+        'Content-type'    : 'text/xml',
+        'Accept'          : 'text/xml',
+        'Accept-Language' : lang,
+        'Accept-Encoding' : 'gzip,deflate',
+        'Host'            : u.netloc,
+    }
 
-        # check if response is gzip compressed
-        if ui.has_key('Content-Encoding'):
-            if ui['Content-Encoding'] == 'gzip':  # uncompress response
-                import gzip
-                cds = StringIO(response)
-                gz = gzip.GzipFile(fileobj=cds)
-                response = gz.read()
+    rkwargs = {}
 
-        return response
+    if username is not None and password is not None:
+        rkwargs['auth'] = (username, password)
+
+    up = requests.post(url, request, headers=headers, **rkwargs)
+    return up.content
+
+def element_to_string(element, encoding=None, xml_declaration=False):
+    """
+    Returns a string from a XML object
+
+    Parameters
+    ----------
+    - element: etree Element
+    - encoding (optional): encoding in string form. 'utf-8', 'ISO-8859-1', etc.
+    - xml_declaration (optional): whether to include xml declaration
+
+    """
+
+    output = None
+
+    if encoding is None:
+        encoding = "ISO-8859-1"
+
+    if etree.__name__ == 'lxml.etree':
+        if xml_declaration:
+            if encoding in ['unicode', 'utf-8']:
+                output = '<?xml version="1.0" encoding="utf-8" standalone="no"?>\n%s' % \
+                       etree.tostring(element, encoding='unicode')
+            else:
+                output = etree.tostring(element, encoding=encoding, xml_declaration=True)
+        else:
+                output = etree.tostring(element)
+    else:
+        if xml_declaration:
+            output = '<?xml version="1.0" encoding="%s" standalone="no"?>\n%s' % (encoding,
+                   etree.tostring(element, encoding=encoding))
+        else:
+            output = etree.tostring(element)
+
+    return output
+
 
 def xml2string(xml):
     """
@@ -313,6 +435,8 @@ def xml2string(xml):
     - xml: xml string
 
     """
+    warnings.warn("DEPRECIATION WARNING!  You should now use the 'element_to_string' method \
+                   The 'xml2string' method will be removed in a future version of OWSLib.")
     return '<?xml version="1.0" encoding="ISO-8859-1" standalone="no"?>\n' + xml
 
 def xmlvalid(xml, xsd):
@@ -357,7 +481,7 @@ def build_get_url(base_url, params):
 
     pars = [x[0] for x in qs]
 
-    for key,value in params.iteritems():
+    for key,value in six.iteritems(params):
         if key not in pars:
             qs.append( (key,value) )
 
@@ -366,19 +490,19 @@ def build_get_url(base_url, params):
 
 def dump(obj, prefix=''):
     '''Utility function to print to standard output a generic object with all its attributes.'''
-    
-    print "%s %s : %s" % (prefix, obj.__class__, obj.__dict__)
-    
-def getTypedValue(type, value):
-    ''' Utility function to cast a string value to the appropriate XSD type. '''
-    
-    if type=='boolean':
-       return bool(value)
-    elif type=='integer':
-       return int(value)
-    elif type=='float':
+
+    print("%s %s.%s : %s" % (prefix, obj.__module__, obj.__class__.__name__, obj.__dict__))
+
+def getTypedValue(data_type, value):
+    '''Utility function to cast a string value to the appropriate XSD type. '''
+
+    if data_type == 'boolean':
+        return bool(value)
+    elif data_type == 'integer':
+        return int(value)
+    elif data_type == 'float':
         return float(value)
-    elif type=='string':
+    elif data_type == 'string':
         return str(value)
     else:
         return value # no type casting
@@ -417,10 +541,36 @@ def extract_xml_list(elements):
 Some people don't have seperate tags for their keywords and seperate them with
 a newline. This will extract out all of the keywords correctly.
 """
-    keywords = [re.split(r'[\n\r]+',f.text) for f in elements if f.text]
-    flattened = [item.strip() for sublist in keywords for item in sublist]
-    remove_blank = filter(None, flattened)
-    return remove_blank
+    if elements:
+        keywords = [re.split(r'[\n\r]+',f.text) for f in elements if f.text]
+        flattened = [item.strip() for sublist in keywords for item in sublist]
+        remove_blank = [_f for _f in flattened if _f]
+        return remove_blank
+    else:
+        return []
+
+
+def strip_bom(raw_text):
+    """ return the raw (assumed) xml response without the BOM
+    """
+    boms = [
+        codecs.BOM,
+        codecs.BOM_BE,
+        codecs.BOM_LE,
+        codecs.BOM_UTF8,
+        codecs.BOM_UTF16,
+        codecs.BOM_UTF16_LE,
+        codecs.BOM_UTF16_BE,
+        codecs.BOM_UTF32,
+        codecs.BOM_UTF32_LE,
+        codecs.BOM_UTF32_BE
+    ]
+
+    if not isinstance(raw_text, str):
+        for bom in boms:
+            if raw_text.startswith(bom):
+                return raw_text.replace(bom, '')
+    return raw_text
 
 
 def bind_url(url):
@@ -442,3 +592,72 @@ def bind_url(url):
         elif url.find('&', -1) == -1: # like http://host/wms?foo=bar
             binder = '&'
     return '%s%s' % (url, binder)
+
+import logging
+# Null logging handler
+try:
+    # Python 2.7
+    NullHandler = logging.NullHandler
+except AttributeError:
+    # Python < 2.7
+    class NullHandler(logging.Handler):
+        def emit(self, record):
+            pass
+log = logging.getLogger('owslib')
+log.addHandler(NullHandler())
+
+# OrderedDict
+try:  # 2.7
+    from collections import OrderedDict
+except:  # 2.6
+    from ordereddict import OrderedDict
+
+
+def which_etree():
+    """decipher which etree library is being used by OWSLib"""
+
+    which_etree = None
+
+    if 'lxml' in etree.__file__:
+        which_etree = 'lxml.etree'
+    elif 'xml/etree' in etree.__file__:
+        which_etree = 'xml.etree'
+    elif 'elementree' in etree.__file__:
+        which_etree = 'elementtree.ElementTree'
+
+    return which_etree
+
+def findall(root, xpath, attribute_name=None, attribute_value=None):
+    """Find elements recursively from given root element based on
+    xpath and possibly given attribute
+
+    :param root: Element root element where to start search
+    :param xpath: xpath defintion, like {http://foo/bar/namespace}ElementName
+    :param attribute_name: name of possible attribute of given element
+    :param attribute_value: value of the attribute
+    :return: list of elements or None
+    """
+
+    found_elements = []
+
+
+    # python 2.6 < does not support complicated XPATH expressions used lower
+    if (2, 6) == sys.version_info[0:2] and which_etree() != 'lxml.etree':
+
+        elements = root.getiterator(xpath)
+
+        if attribute_name is not None and attribute_value is not None:
+            for element in elements:
+                if element.attrib.get(attribute_name) == attribute_value:
+                    found_elements.append(element)
+        else:
+            found_elements = elements
+    # python at least 2.7 and/or lxml can do things much simplier
+    else:
+        if attribute_name is not None and attribute_value is not None:
+            xpath = '%s[@%s="%s"]' % (xpath, attribute_name, attribute_value)
+        found_elements = root.findall('.//' + xpath)
+
+    if found_elements == []:
+        found_elements = None
+    return found_elements

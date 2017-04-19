@@ -1,12 +1,13 @@
 Imports
 
+    >>> from __future__ import (absolute_import, division, print_function)
     >>> from tests.utils import resource_file
     >>> from owslib.swe.common import Time, DataChoice, DataRecord, AbstractSimpleComponent
     >>> from owslib.etree import etree
 
 Initialize
 
-    >>> swexml  = open(resource_file('swe_ioos_multistation_timeseries.xml'), 'r').read()
+    >>> swexml  = open(resource_file('swe_ioos_multistation_timeseries.xml'), 'rb').read()
     >>> dr      = etree.fromstring(swexml)
     >>> if hasattr(dr, 'getroot'):
     ...     dr = dr.getroot()

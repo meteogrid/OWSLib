@@ -3,6 +3,7 @@ This test does not execute any live HTTP request, rather it parses XML files con
 
 Imports
 
+    >>> from __future__ import (absolute_import, division, print_function)
     >>> from tests.utils import resource_file
     >>> from owslib.wps import WebProcessingService
 
@@ -12,10 +13,12 @@ Initialize WPS client
 
 Execute fake invocation of GetCapabilities operation by parsing cached response from USGS service
 
-    >>> xml = open(resource_file('wps_USGSCapabilities.xml'), 'r').read()
+    >>> xml = open(resource_file('wps_USGSCapabilities.xml'), 'rb').read()
     >>> wps.getcapabilities(xml=xml)
 
 Check WPS description
+    >>> wps.updateSequence is not None
+    True
     >>> wps.identification.type
     'WPS'
     >>> wps.identification.title
@@ -25,7 +28,7 @@ Check WPS description
 
 Check available operations
     >>> for operation in wps.operations:
-    ...     print operation.name
+    ...     print(operation.name)
     ... 
     GetCapabilities
     DescribeProcess
