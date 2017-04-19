@@ -184,6 +184,9 @@ class DescribeCoverageReader(object):
             if 'identifier' not in params:
                 qs.append(('identifier', self.identifier))
                 qs.append(('format', 'text/xml'))
+        elif self.version == '2.0.1':
+            if 'coverageId' not in params:
+                qs.append(('coverageId', self.identifier))
         urlqs = urlencode(tuple(qs))
         return service_url.split('?')[0] + '?' + urlqs
 
