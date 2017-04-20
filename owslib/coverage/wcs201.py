@@ -21,8 +21,14 @@ from owslib.coverage import wcsdecoder
 from owslib.crs import Crs
 import iso8601
 
-def ns(tag):
-    return '{http://www.opengis.net/wcs/2.0}'+tag
+class ns(object):
+    def __init__(self, prefix):
+        self.prefix = prefix
+    def __getattr__(self, tag):
+        return self.prefix + tag
+
+OWS = ns('{http://www.opengis.net/ows/2.0}')
+WCS = ns('{http://www.opengis.net/wcs/2.0}')
 
 class WebCoverageService_2_0_1(WCSBase):
     """Abstraction for OGC Web Coverage Service (WCS), version 2.0.1
@@ -48,7 +54,7 @@ class WebCoverageService_2_0_1(WCSBase):
             self._capabilities = reader.read(self.url)
 
         # check for exceptions
-        se = self._capabilities.find('{http://www.opengis.net/ows/2.0}Exception')
+        se = self._capabilities.find('Exception')
 
         if se is not None:
             err_message = str(se.text).strip()
@@ -57,18 +63,18 @@ class WebCoverageService_2_0_1(WCSBase):
         #build metadata objects:
         
         #serviceIdentification metadata
-        elem=self._capabilities.find('{http://www.opengis.net/ows/2.0}ServiceIdentification')
+        elem=self._capabilities.find(OWS.ServiceIdentification)
         if elem is None:
-            elem=self._capabilities.find('{http://www.opengis.net/ows/2.0}ServiceIdentification')
+            elem=self._capabilities.find(OWS.ServiceIdentification)
         self.identification=ServiceIdentification(elem)
         
         #serviceProvider
-        elem=self._capabilities.find('{http://www.opengis.net/ows/2.0}ServiceProvider')
+        elem=self._capabilities.find(OWS.ServiceProvider)
         self.provider=ServiceProvider(elem)
                 
         #serviceOperations
         self.operations = []
-        for elem in self._capabilities.findall('{http://www.opengis.net/ows/2.0}OperationsMetadata/{http://www.opengis.net/ows/2.0}Operation'):
+        for elem in self._capabilities.findall(OWS.OperationsMetadata + '/' + OWS.Operation):
             self.operations.append(Operation(elem))
         
         # exceptions - ***********TO DO *************
@@ -78,15 +84,15 @@ class WebCoverageService_2_0_1(WCSBase):
         # serviceContents: our assumption is that services use a top-level layer
         # as a metadata organizer, nothing more.
         self.contents = {}
-        top = self._capabilities.find('{http://www.opengis.net/wcs/2.0}Contents/{http://www.opengis.net/wcs/2.0}CoverageSummary')
-        for elem in self._capabilities.findall('{http://www.opengis.net/wcs/2.0}Contents/{http://www.opengis.net/wcs/2.0}CoverageSummary/{http://www.opengis.net/wcs/2.0}CoverageSummary'):                    
+        top = self._capabilities.find(WCS.Contents + '/' + WCS.CoverageSummary)
+        for elem in self._capabilities.findall(WCS.Contents + '/' + WCS.CoverageSummary + '/' + WCS.CoverageSummary):                    
             cm=ContentMetadata(elem, top, self)
             self.contents[cm.id]=cm
             
         if self.contents=={}:
             #non-hierarchical.
             top=None
-            for elem in self._capabilities.findall('{http://www.opengis.net/wcs/2.0}Contents/{http://www.opengis.net/wcs/2.0}CoverageSummary'):     
+            for elem in self._capabilities.findall(WCS.Contents + '/' + WCS.CoverageSummary):     
                 cm=ContentMetadata(elem, top, self)
                 #make the describeCoverage requests to populate the supported formats/crs attributes
                 self.contents[cm.id]=cm
@@ -136,7 +142,7 @@ class WebCoverageService_2_0_1(WCSBase):
         
         
         if method == 'Get':
-            method='{http://www.opengis.net/ows/2.0}Get'
+            method=OWS.Get
         
         base_url = self.getOperationByName('GetCoverage').methods[method]['url']
 
@@ -162,7 +168,6 @@ class WebCoverageService_2_0_1(WCSBase):
         
         #encode and request
         data = urlencode(request)
-        self.log.debug('WCS 2.0.1 %s %s %s', base_url, data, method)
         u=openURL(base_url, data, method, self.cookies)
         return u
         
@@ -180,9 +185,9 @@ class Operation(object):
     """
     def __init__(self, elem):
         self.name = elem.attrib['name']       
-        self.formatOptions = [f.text for f in elem.findall('{http://www.opengis.net/ows/2.0}Parameter/{http://www.opengis.net/ows/2.0}AllowedValues/{http://www.opengis.net/ows/2.0}Value')]
+        self.formatOptions = [f.text for f in elem.findall(OWS.Parameter + '/' + OWS.AllowedValues + '/' + OWS.Value)]
         methods = []
-        for verb in elem.findall('{http://www.opengis.net/ows/2.0}DCP/{http://www.opengis.net/ows/2.0}HTTP/*'):
+        for verb in elem.findall(OWS.DCP + '/' + OWS.HTTP + '/*'):
             url = verb.attrib['{http://www.w3.org/1999/xlink}href']
             methods.append((verb.tag, {'url': url}))
         self.methods = dict(methods)
@@ -195,11 +200,11 @@ class ServiceIdentification(object):
         self.version="2.0.1"
         self.title=testXMLValue(elem.find('{http://www.opengis.net/ows}Title'))
         if self.title is None:  #may have used the wcs ows namespace:
-            self.title=testXMLValue(elem.find('{http://www.opengis.net/ows/2.0}Title'))
+            self.title=testXMLValue(elem.find(OWS.Title))
         
         self.abstract=testXMLValue(elem.find('{http://www.opengis.net/ows}Abstract'))
         if self.abstract is None:#may have used the wcs ows namespace:
-            self.abstract=testXMLValue(elem.find('{http://www.opengis.net/ows/2.0}Abstract'))
+            self.abstract=testXMLValue(elem.find(OWS.Abstract))
         if elem.find('{http://www.opengis.net/ows}Abstract') is not None:
             self.abstract=elem.find('{http://www.opengis.net/ows}Abstract').text
         else:
@@ -207,13 +212,13 @@ class ServiceIdentification(object):
         self.keywords = [f.text for f in elem.findall('{http://www.opengis.net/ows}Keywords/{http://www.opengis.net/ows}Keyword')]
         #self.link = elem.find('{http://www.opengis.net/wcs/2.0}Service/{http://www.opengis.net/wcs/2.0}OnlineResource').attrib.get('{http://www.w3.org/1999/xlink}href', '')
                
-        if elem.find('{http://www.opengis.net/ows/2.0}Fees') is not None:            
-            self.fees=elem.find('{http://www.opengis.net/ows/2.0}Fees').text
+        if elem.find(OWS.Fees) is not None:            
+            self.fees=elem.find(OWS.Fees).text
         else:
             self.fees=None
         
-        if  elem.find('{http://www.opengis.net/ows/2.0}AccessConstraints') is not None:
-            self.accessConstraints=elem.find('{http://www.opengis.net/ows/2.0}AccessConstraints').text
+        if  elem.find(OWS.AccessConstraints) is not None:
+            self.accessConstraints=elem.find(OWS.AccessConstraints).text
         else:
             self.accessConstraints=None
        
