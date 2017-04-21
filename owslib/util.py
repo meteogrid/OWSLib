@@ -125,12 +125,17 @@ class ResponseWrapper(object):
     """
     def __init__(self, response):
         self._response = response
+        self.__content = None
 
     def info(self):
         return self._response.headers
 
-    def read(self):
-        return self._response.content
+    def read(self, size=-1):
+        if size == -1:
+            return self._response.content
+        if self.__content is None:
+            self.__content = StringIO(self._response.content)
+        return self.__content.read(size)
 
     def geturl(self):
         return self._response.url.replace('&&', '&')
