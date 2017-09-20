@@ -16,8 +16,9 @@ Web Coverage Server (WCS) methods and metadata. Factory function.
 from __future__ import (absolute_import, division, print_function)
 
 from . import etree
+
 from .coverage import wcs100, wcs110, wcs111, wcs201, wcsBase
-from owslib.util import openURL
+from owslib.util import clean_ows_url, openURL
 
 
 def WebCoverageService(url, version=None, xml=None, cookies=None, timeout=30):
@@ -33,11 +34,13 @@ def WebCoverageService(url, version=None, xml=None, cookies=None, timeout=30):
         version = capabilities.get('version')
         del capabilities
 
+    clean_url = clean_ows_url(url)
+
     if version == '1.0.0':
-        return wcs100.WebCoverageService_1_0_0.__new__(wcs100.WebCoverageService_1_0_0, url, xml, cookies)
+        return wcs100.WebCoverageService_1_0_0.__new__(wcs100.WebCoverageService_1_0_0, clean_url, xml, cookies)
     elif version == '1.1.0':
-        return wcs110.WebCoverageService_1_1_0.__new__(wcs110.WebCoverageService_1_1_0,url, xml, cookies)
+        return wcs110.WebCoverageService_1_1_0.__new__(wcs110.WebCoverageService_1_1_0, clean_url, xml, cookies)
     elif version == '1.1.1':
-        return wcs111.WebCoverageService_1_1_1.__new__(wcs111.WebCoverageService_1_1_1,url, xml, cookies)
+        return wcs111.WebCoverageService_1_1_1.__new__(wcs111.WebCoverageService_1_1_1, clean_url, xml, cookies)
     elif version == '2.0.1':
-        return wcs201.WebCoverageService_2_0_1.__new__(wcs201.WebCoverageService_2_0_1,url, xml, cookies)
+        return wcs201.WebCoverageService_2_0_1.__new__(wcs201.WebCoverageService_2_0_1, clean_url, xml, cookies)
