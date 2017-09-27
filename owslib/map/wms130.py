@@ -391,6 +391,112 @@ class WebMapService_1_3_0(object):
             err_message = six.text_type(se_tree.find('ServiceException').text).strip()
             raise ServiceException(err_message)
         return u
+    
+    def __build_getlegendgraphic_request(self, layer=None, style=None,
+               format=None, size=None,
+               exceptions=None, **kwargs):
+
+        request = {'service': 'WMS', 'version': self.version, 'request': 'GetLegendGraphic'}
+
+        # check layers and styles
+        request['layer'] = layer
+        if style:
+            request['style'] = style
+        else:
+            request['style'] = ''
+
+        # size
+        request['width'] = str(size[0])
+        request['height'] = str(size[1])
+
+        request['format'] = str(format)
+        request['exceptions'] = str(exceptions)
+
+        if kwargs:
+            for kw in kwargs:
+                request[kw]=kwargs[kw]
+        return request
+
+    def getlegendgraphic(self, layer=None,
+               style=None,
+               format=None,
+               size=None,
+               exceptions='XML',
+               method='Get',
+               timeout=None,
+               **kwargs
+               ):
+        """Request and return an image from the WMS as a file-like object.
+
+        Parameters
+        ----------
+        layer : string
+            Content layer name.
+        style : string
+            Named style.
+        format : string
+            Output image format such as 'image/jpeg'.
+        width : integer
+            width in pixels.
+        height : integer
+            height in pixels.
+        method : string
+            Optional. HTTP DCP method name: Get or Post.
+        **kwargs : extra arguments
+            anything else e.g. vendor specific parameters
+
+        Example
+        -------
+            wms = WebMapService('http://webservices.nationalatlas.gov/wms/1million',\
+                                    version='1.3.0')
+            img = wms.getlegendgraphic(layer='airports1m',\
+                                 style='default',\
+                                 size=[300, 300],\
+                                 format='image/jpeg',\
+            out = open('example.jpg', 'wb')
+            out.write(img.read())
+            out.close()
+
+        """
+
+        try:
+            base_url = next((m.get('url') for m in
+                            self.getOperationByName('GetMap').methods if
+                            m.get('type').lower() == method.lower()))
+        except StopIteration:
+            base_url = self.url
+
+        request = self.__build_getlegendgraphic_request(
+            layer=layer,
+            style=style,
+            format=format,
+            size=size,
+            exceptions=exceptions,
+            **kwargs)
+
+        data = urlencode(request)
+
+        self.request = bind_url(base_url) + data
+
+        u = openURL(base_url,
+                    data,
+                    method,
+                    username=self.username,
+                    password=self.password,
+                    timeout=timeout or self.timeout)
+
+        # need to handle casing in the header keys
+        headers = {}
+        for k, v in six.iteritems(u.info()):
+            headers[k.lower()] = v
+
+        # handle the potential charset def
+        if headers['content-type'].split(';')[0] in ['application/vnd.ogc.se_xml', 'text/xml']:
+            se_xml = u.read()
+            se_tree = etree.fromstring(se_xml)
+            err_message = six.text_type(se_tree.find(nspath('ServiceException', OGC_NAMESPACE)).text).strip()
+            raise ServiceException(err_message)
+        return u
 
 class ServiceIdentification(object):
     def __init__(self, infoset, version):
