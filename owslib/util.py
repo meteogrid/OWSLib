@@ -15,8 +15,11 @@ from datetime import datetime
 import pytz
 from owslib.etree import etree, ParseError
 from owslib.namespaces import Namespaces
-from six.moves.urllib.parse import urlsplit, urlencode, urlparse, parse_qs, urlunparse
-
+try:
+    from six.moves.urllib.parse import urlsplit, urlencode, urlparse, parse_qs, urlunparse
+except ImportError:
+    from urlparse import urlsplit, urlparse, parse_qs, urlunparse
+    from urllib import urlencode
 try:
     from StringIO import StringIO  # Python 2
     BytesIO = StringIO
